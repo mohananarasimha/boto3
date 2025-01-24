@@ -1,0 +1,55 @@
+import boto3
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError, ClientError
+
+
+session = boto3.Session()
+ec2_client = session.client('ec2')
+
+
+def stop_and_create_snapshot(instance_id):
+    try:
+        # Describe the instance
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        instance = response['Reservations'][0]['Instances'][0]
+
+        current_state = instance['State']['Name']
+        print(f"Current state of instance {instance_id}: {current_state}")
+
+        # Stop the instance if running
+        if current_state == 'running':
+            ec2_client.stop_instances(InstanceIds=[instance_id])
+            print("Waiting for the instance to stop...")
+            waiter = ec2_client.get_waiter('instance_stopped')
+            waiter.wait(InstanceIds=[instance_id])
+            print(f"Instance {instance_id} has been stopped.")
+        elif current_state == 'stopped':
+            print(f"Instance {instance_id} is already stopped.")
+        else:
+            print(f"Instance {instance_id} is in {current_state} state. Unable to proceed.")
+            return
+
+        # Get attached volumes
+        volumes = [vol['Ebs']['VolumeId'] for vol in instance['BlockDeviceMappings']]
+        print(f"Volumes attached to instance {instance_id}: {volumes}")
+
+        # Create snapshots for each volume
+        for v in volumes:
+            snapshot = ec2_client.create_snapshot(
+                VolumeId=v,
+                Description=f"Snapshot of volume {v} from instance {instance_id}"
+            )
+            print(f"Snapshot created: {snapshot['SnapshotId']} for volume: {v}")
+
+    except NoCredentialsError:
+        print("Error: No AWS credentials found.")
+    except PartialCredentialsError:
+        print("Error: Incomplete AWS credentials provided.")
+    except ClientError as e:
+        print(f"ClientError: {e.response['Error']['Message']}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {str(e)}")
+
+
+# Specify the instance ID
+i = 'i-097aba1db86f0be00'  # Replace with your EC2 instance ID
+stop_and_create_snapshot(i)
